@@ -83,7 +83,7 @@ llm-proxy/
 
 ### Prerequisites
 
-- **Python**: 3.8 or higher
+- **Python**: 3.8 or higher (python 3.11 tested)
 - **pip**: Python package manager
 - **Virtual environment** (recommended): `venv`, `pyenv`, `conda`, etc.
 - **Backend LLM server**:
