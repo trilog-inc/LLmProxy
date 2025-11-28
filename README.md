@@ -1,4 +1,4 @@
-I quickly vibe coded this proxy server to clean up tool calls from Kimi-K2-Thinking to Kilo Code when using [SGLang](https://github.com/sgl-project/sglang)( Release Gateway-v0.2.3 ) with the [Ktransformers](https://github.com/kvcache-ai/ktransformers) backend. The SGLang kimi_k2 parsers sometimes leaves tool call content in the reasoning payloads, thus ruining the agentic benefit of this model. With this proxy server, I can have 100+ function calls in a task ( with 1 or 2 failures).
+I quickly vibe coded this proxy server to clean up tool calls from Kimi-K2-Thinking to Kilo Code when using [SGLang](https://github.com/sgl-project/sglang)( Release Gateway-v0.2.3 ) with the [Ktransformers](https://github.com/kvcache-ai/ktransformers) backend. The SGLang kimi_k2 parsers sometimes leave tool call content in the reasoning payloads, thus ruining the agentic benefit of this model. With this proxy server, I can have 100+ function calls in a task ( with 1 or 2 failures).
 
 
 # LLM Proxy
