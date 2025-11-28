@@ -478,4 +478,4 @@ Contributions, bug reports, and feature requests are welcome.
 ## License
 
 This project is provided as-is for development and testing purposes.  
-Before using it in production or distributing binaries, you may want to choose and add a formal open-source license (e.g., MIT, Apache-2.0) that fits your needs.
+MIT
