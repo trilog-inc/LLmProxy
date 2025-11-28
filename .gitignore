@@ -1,0 +1,17 @@
+# Ignore local env
+p3env/
+.env
+
+# But do not ignore .env.example
+!.env.example
+
+# Log files
+*.log
+*.txt
+
+# Python Cache
+__pycache__/
+*.pyc
+
+#Mac Crap
+.DS_Store
