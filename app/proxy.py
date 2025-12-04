@@ -165,10 +165,23 @@ class SGLangProxy:
                                 yield (line + "\n").encode("utf-8")
                                 continue
 
-                            # Run through transformer, then log + aggregate + forward
+                            # Run through transformer, then aggregate, normalize finish_reason, log + forward
                             for out_chunk in transformer.process_chunk(parsed_chunk):
-                                proxy_logger.log_stream_chunk(request_id, out_chunk)
+                                # First update aggregator state with this chunk
                                 aggregator.process_chunk(out_chunk)
+
+                                # If this choice has used tool_calls overall, force finish_reason="tool_calls"
+                                if 'choices' in out_chunk and aggregator.choices:
+                                    for idx, ch in enumerate(out_chunk['choices']):
+                                        fr = ch.get('finish_reason')
+                                        if fr == 'stop' and idx < len(aggregator.choices):
+                                            agg_choice = aggregator.choices[idx]
+                                            tool_calls_accum = agg_choice['delta'].get('tool_calls') or []
+                                            if tool_calls_accum:
+                                                ch['finish_reason'] = 'tool_calls'
+                                                agg_choice['finish_reason'] = 'tool_calls'
+
+                                proxy_logger.log_stream_chunk(request_id, out_chunk)
                                 out_data = json.dumps(out_chunk, separators=(",", ":"))
                                 yield f"data: {out_data}\n\n".encode("utf-8")
 
@@ -297,7 +310,13 @@ class StreamingResponseAggregator:
             
             # Update finish_reason if present
             if 'finish_reason' in choice:
-                self.choices[i]['finish_reason'] = choice['finish_reason']
+                fr = choice['finish_reason']
+                self.choices[i]['finish_reason'] = fr
+                # If this choice used tool calls, normalize "stop" to "tool_calls"
+                if fr == 'stop':
+                    tool_calls_accum = self.choices[i]['delta'].get('tool_calls') or []
+                    if tool_calls_accum:
+                        self.choices[i]['finish_reason'] = 'tool_calls'
             
             # Update logprobs if present
             if 'logprobs' in choice:

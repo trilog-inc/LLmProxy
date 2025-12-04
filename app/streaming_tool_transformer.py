@@ -61,6 +61,9 @@ class StreamingToolCallTransformer:
         self.state: ParserState = ParserState.IDLE
         self.builder = ToolCallBuilder()
         self.pending_chunks: List[Dict[str, Any]] = []
+        # Tracks whether this stream has ever used a tool call so we can
+        # normalize finish_reason to "tool_calls" instead of "stop".
+        self.has_tool_calls: bool = False
 
         # Unicode control characters used by SGlang for special markers
         self.control_pattern = re.compile(r"[\u0f00-\u0fff\u1800-\u18af]+")
@@ -106,6 +109,14 @@ class StreamingToolCallTransformer:
                 )
                 self.pending_chunks.append(copy.deepcopy(chunk))
             return
+
+        # If this stream has used tool calls at any point, normalize any
+        # upstream "stop" finish_reason to "tool_calls" so clients see the
+        # correct reason for termination.
+        if self.has_tool_calls and "choices" in chunk:
+            for ch in chunk["choices"]:
+                if isinstance(ch, dict) and ch.get("finish_reason") == "stop":
+                    ch["finish_reason"] = "tool_calls"
 
         delta = chunk["choices"][0].get("delta", {})
         reasoning_content = delta.get("reasoning_content")
@@ -237,6 +248,8 @@ class StreamingToolCallTransformer:
         tool_name, tool_id = match.group(1), match.group(2)
         self.builder.tool_name = tool_name
         self.builder.tool_id = tool_id
+        # Mark that this stream has invoked at least one tool call
+        self.has_tool_calls = True
 
         header_end = match.end()
         # Anything after the header becomes the initial argument segment.
