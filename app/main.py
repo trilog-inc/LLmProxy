@@ -4,8 +4,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import json
 import httpx
 from .config import settings
-from .proxy import sglang_proxy
+from .proxy import SGLangProxy
 from .logger import proxy_logger
+from .request_queue import queue_manager
 
 
 app = FastAPI(
@@ -32,6 +33,7 @@ async def add_request_id(request: Request, call_next):
 async def proxy_chat_completions(request: Request):
     """
     Proxy endpoint for chat completions that forwards requests to SGLang server
+    with proper queue management to prevent request dropping.
     """
     try:
         # Parse request body
@@ -40,8 +42,11 @@ async def proxy_chat_completions(request: Request):
         # Get request headers
         headers = dict(request.headers)
         
-        # Forward to SGLang server
-        response_data, is_streaming = await sglang_proxy.forward_chat_completion(
+        # Create a per-request proxy instance (stateless design)
+        proxy = SGLangProxy()
+        
+        # Forward to SGLang server through queue manager
+        response_data, is_streaming = await proxy.forward_chat_completion(
             request_data, headers
         )
         
@@ -62,6 +67,9 @@ async def proxy_chat_completions(request: Request):
                 headers={"X-Request-ID": request.state.request_id}
             )
     
+    except HTTPException as http_exc:
+        # Re-raise HTTP exceptions to preserve status codes
+        raise http_exc
     except Exception as e:
         proxy_logger.log_error(
             getattr(request.state, 'request_id', 'unknown'),
@@ -179,6 +187,17 @@ async def health_check():
     return {"status": "healthy", "service": "llm-proxy"}
 
 
+@app.get("/queue/status")
+async def queue_status():
+    """Get current queue status for monitoring"""
+    from .request_queue import queue_manager
+    stats = queue_manager.get_queue_stats()
+    return {
+        "status": "ok",
+        "queue_stats": stats
+    }
+
+
 @app.get("/")
 async def root():
     """Root endpoint with service information"""
@@ -207,6 +226,11 @@ if __name__ == "__main__":
     # Toggle runtime flag for streaming tool-call parsing
     if args.enable_streaming_tool_parser:
         settings.ENABLE_STREAMING_TOOL_PARSER = True
+
+    # Log configuration values
+    proxy_logger.log_info("Configuration loaded:")
+    proxy_logger.log_info(f"  ENABLE_STREAMING_TOOL_PARSER: {settings.ENABLE_STREAMING_TOOL_PARSER}")
+    proxy_logger.log_info(f"  ENABLE_FILE_LOGGING: {settings.ENABLE_FILE_LOGGING}")
 
     uvicorn.run(
         app,

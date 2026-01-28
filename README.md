@@ -51,7 +51,8 @@ This proxy sits between your client and a backend such as an SGLang server, forw
 - **Request IDs**
   - Each request gets a unique ID for correlation across logs and tooling.
 - **Optional streaming tool-call transformer**
-  - Optional server-side repair of tool calls embedded in `reasoning_content` for streaming responses.
+  - Optional server-side repair of tool calls embedded in both `reasoning_content` and `content` fields for streaming responses.
+  - Extracts tool calls from either field and converts them into properly structured `tool_calls` in the response.
 
 ---
 
@@ -160,7 +161,7 @@ ENABLE_STREAMING_TOOL_PARSER=false
 | `LOG_FILE`                  | Path to the log file for persistent logs (used only when `ENABLE_FILE_LOGGING=true`).      | `llm_proxy.log`               |
 | `ENABLE_FILE_LOGGING`       | Toggle for file-based logging; when `false`, logging is console-only.                      | `true`                         |
 | `FORWARD_TIMEOUT`           | Timeout (seconds) for forwarding requests to the backend.                                   | `300`                          |
-| `ENABLE_STREAMING_TOOL_PARSER` | Enables streaming tool-call repair in responses when set to `true`.                     | `false`                        |
+| `ENABLE_STREAMING_TOOL_PARSER` | Enables streaming tool-call repair in responses when set to `true`. Scans both `reasoning_content` and `content` fields for tool call patterns. | `false`                        |
 
 ---
 

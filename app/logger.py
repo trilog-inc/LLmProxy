@@ -96,9 +96,9 @@ class ProxyLogger:
             
             log_data = {
                 'request_id': request_id,
-                'content_length': len(content) if content else 0,
-                'reasoning_content_length': len(reasoning_content) if reasoning_content else 0,
-                'tool_calls_count': len(tool_calls),
+                'content_length': len(content or []) if content else 0,
+                'reasoning_content_length': len(reasoning_content or []) if reasoning_content else 0,
+                'tool_calls_count': len(tool_calls or []),
                 'full_message': message
             }
             
@@ -112,6 +112,10 @@ class ProxyLogger:
             'details': details or {}
         }
         logger.error(f"Error occurred: {json.dumps(error_data, indent=2, default=str)}")
+    
+    def log_info(self, message: str):
+        """Log general information messages"""
+        logger.info(message)
 
 
 # Global logger instance

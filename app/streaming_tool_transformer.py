@@ -92,6 +92,8 @@ class StreamingToolCallTransformer:
           while idle. If we are in the middle of building a tool call, invalid
           chunks are buffered (for possible emergency flush) but NOT forwarded,
           to avoid leaking raw tool_call markers to the client.
+        - Processes both reasoning_content and content fields for tool call detection.
+        - Follows stream order: reasoning_content is processed first, then content.
         """
         if not self._is_valid_chunk(chunk):
             # While idle, just pass invalid chunks through unchanged.
@@ -120,20 +122,44 @@ class StreamingToolCallTransformer:
 
         delta = chunk["choices"][0].get("delta", {})
         reasoning_content = delta.get("reasoning_content")
+        content = delta.get("content")
 
-        # If there's no reasoning content and we're idle, just pass through
-        if self.state == ParserState.IDLE and not reasoning_content:
+        # Process reasoning_content first (maintains stream order), then content
+        # If we're idle and neither field has content, pass through
+        if self.state == ParserState.IDLE and not reasoning_content and not content:
             yield chunk
             return
 
-        if self.state == ParserState.IDLE:
-            yield from self._process_idle_state(chunk, reasoning_content)
-        elif self.state == ParserState.TOOL_CALL_BUILD:
-            yield from self._process_tool_call_build_state(chunk, reasoning_content)
-        elif self.state == ParserState.ARGUMENT_BUILD:
-            yield from self._process_argument_build_state(chunk, reasoning_content)
+        # Process reasoning_content first if present
+        if reasoning_content is not None:
+            if self.state == ParserState.IDLE:
+                yield from self._process_idle_state(chunk, reasoning_content, "reasoning_content")
+            elif self.state == ParserState.TOOL_CALL_BUILD:
+                yield from self._process_tool_call_build_state(chunk, reasoning_content, "reasoning_content")
+            elif self.state == ParserState.ARGUMENT_BUILD:
+                yield from self._process_argument_build_state(chunk, reasoning_content, "reasoning_content")
+            else:
+                # Fallback safety
+                yield chunk
+            return
+
+        # Then process content field if present and no reasoning_content
+        if content is not None:
+            if self.state == ParserState.IDLE:
+                yield from self._process_idle_state(chunk, content, "content")
+            elif self.state == ParserState.TOOL_CALL_BUILD:
+                yield from self._process_tool_call_build_state(chunk, content, "content")
+            elif self.state == ParserState.ARGUMENT_BUILD:
+                yield from self._process_argument_build_state(chunk, content, "content")
+            else:
+                # Fallback safety
+                yield chunk
+            return
+
+        # If neither field has content but we're in a tool call state, continue processing
+        if self.state != ParserState.IDLE:
+            yield from self._process_argument_build_state(chunk, "", field_type="content")
         else:
-            # Fallback safety
             yield chunk
 
     def flush_pending(self) -> Iterator[Dict[str, Any]]:
@@ -158,14 +184,14 @@ class StreamingToolCallTransformer:
     # ------------------------------------------------------------------
 
     def _process_idle_state(
-        self, chunk: Dict[str, Any], reasoning_content: Optional[str]
+        self, chunk: Dict[str, Any], text: Optional[str], field_type: str = "reasoning_content"
     ) -> Iterator[Dict[str, Any]]:
-        if not reasoning_content:
+        if not text:
             # Nothing to do
             yield chunk
             return
 
-        cleaned, has_marker = self._strip_markers_and_detect(reasoning_content)
+        cleaned, has_marker = self._strip_markers_and_detect(text)
         looks_like_header = self._looks_like_tool_start(cleaned)
 
         # No markers, no header pattern: pass through unchanged
@@ -219,19 +245,19 @@ class StreamingToolCallTransformer:
         yield from self._try_finish_tool_header(chunk_from=chunk, add_to_pending=False)
 
     def _process_tool_call_build_state(
-        self, chunk: Dict[str, Any], reasoning_content: Optional[str]
+        self, chunk: Dict[str, Any], text: Optional[str], field_type: str = "reasoning_content"
     ) -> Iterator[Dict[str, Any]]:
         # While building a header, subsequent chunks are all considered part
         # of the header buffer (after stripping markers).
-        cleaned, _ = self._strip_markers_and_detect(reasoning_content or "")
+        cleaned, _ = self._strip_markers_and_detect(text or "")
         self.builder.buffer += cleaned
         # Keep original chunk for possible fallback
         self.pending_chunks.append(copy.deepcopy(chunk))
 
-        yield from self._try_finish_tool_header(chunk_from=chunk, add_to_pending=False)
+        yield from self._try_finish_tool_header(chunk_from=chunk, add_to_pending=False, field_type=field_type)
 
     def _try_finish_tool_header(
-        self, chunk_from: Dict[str, Any], add_to_pending: bool
+        self, chunk_from: Dict[str, Any], add_to_pending: bool, field_type: str = "reasoning_content"
     ) -> Iterator[Dict[str, Any]]:
         """
         Attempt to extract functions.<name>:<id> from builder.buffer.
@@ -262,9 +288,10 @@ class StreamingToolCallTransformer:
             tool_name, tool_id, chunk_from
         )
         logger.debug(
-            "StreamingToolCallTransformer: detected tool header functions.%s:%s",
+            "StreamingToolCallTransformer: detected tool header functions.%s:%s from %s field",
             tool_name,
             tool_id,
+            field_type
         )
         yield start_chunk
 
@@ -278,13 +305,13 @@ class StreamingToolCallTransformer:
                 yield out_chunk
 
     def _process_argument_build_state(
-        self, chunk: Dict[str, Any], reasoning_content: Optional[str]
+        self, chunk: Dict[str, Any], text: Optional[str], field_type: str = "reasoning_content"
     ) -> Iterator[Dict[str, Any]]:
         # Keep the original for possible emergency flush.
         self.pending_chunks.append(copy.deepcopy(chunk))
 
         # Stream arguments as tool_calls deltas.
-        for out_chunk in self._emit_argument_delta(reasoning_content or "", chunk):
+        for out_chunk in self._emit_argument_delta(text or "", chunk):
             yield out_chunk
 
     # ------------------------------------------------------------------
@@ -468,6 +495,18 @@ class StreamingToolCallTransformer:
         new_chunk = copy.deepcopy(original_chunk)
         delta = new_chunk["choices"][0].setdefault("delta", {})
         delta["reasoning_content"] = reasoning
+        # Ensure we don't accidentally forward any tool_calls with this piece
+        if "tool_calls" in delta:
+            delta["tool_calls"] = None
+        return new_chunk
+
+    def _clone_chunk_with_content(
+        self, original_chunk: Dict[str, Any], content: str
+    ) -> Dict[str, Any]:
+        """Clone a chunk and override its content with `content`."""
+        new_chunk = copy.deepcopy(original_chunk)
+        delta = new_chunk["choices"][0].setdefault("delta", {})
+        delta["content"] = content
         # Ensure we don't accidentally forward any tool_calls with this piece
         if "tool_calls" in delta:
             delta["tool_calls"] = None

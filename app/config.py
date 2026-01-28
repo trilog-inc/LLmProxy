@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # Timeout settings
     FORWARD_TIMEOUT: int = 300  # 5 minutes for long-running LLM requests
     
+    # Queue settings for single-backend server handling
+    MAX_CONCURRENT_REQUESTS: int = 1  # SGLang backend can only handle 1 request at a time
+    MAX_QUEUE_SIZE: int = 100  # Maximum number of requests to queue before rejecting
+    QUEUE_TIMEOUT: int = 600  # Maximum time (seconds) a request can wait in queue
+    
     # CORS settings
     ALLOWED_ORIGINS: list[str] = ["*"]
     
